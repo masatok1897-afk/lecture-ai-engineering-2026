@@ -11,7 +11,7 @@
 
 ## 宿題
 
-- 取り組んだレベル：基礎 / 実装 / 発展
+- 取り組んだレベル：基礎
 - やったこと：
 `app/judge.py` の `CriterionVerdict` で、`reason`→`verdict` を `verdict`→`reason` に入れ替えた。同じ `labels.jsonl`・同じ `rubric.md`・同じモデル（gemini-3.5-flash-lite、temperature 0）で再採点した。ぶれを見るため、変更前を4回、変更後を2回実行した。
 - 結果：
