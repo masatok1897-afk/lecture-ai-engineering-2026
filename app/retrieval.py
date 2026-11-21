@@ -1,5 +1,5 @@
 """第5回: ページ単位のベクトル検索。"""
-
+import os
 import argparse
 import json
 import math
@@ -32,6 +32,33 @@ def get_all_materials() -> str:
         for section in document["content"]
         for page in section["content"]
     )
+
+
+RAG_NEIGHBORS = os.environ.get("RAG_NEIGHBORS") == "1"  # 1 のとき前後1ページも付ける
+
+
+def add_neighbors(hits: list[dict]) -> list[dict]:
+    """検索で当たった各ページに、同じ資料内の前後1ページを足す。"""
+    pages = load_pages(RAG_SOURCE)
+    position = {page["page_id"]: i for i, page in enumerate(pages)}
+    seen = {hit["page_id"] for hit in hits}  # すでに結果に入っているページ
+    neighbors = []
+    for hit in hits:
+        i = position.get(hit["page_id"])
+        if i is None:
+            continue
+        for j in (i - 1, i + 1):
+            if not 0 <= j < len(pages):  # 先頭・末尾の外
+                continue
+            page = pages[j]
+            if page["document_id"] != hit["document_id"]:  # 別の資料はまたがない
+                continue
+            if page["page_id"] in seen:  # 同じページを重複させない
+                continue
+            seen.add(page["page_id"])
+            neighbors.append({**page, "role": "neighbor", "neighbor_of": hit["page_id"]})
+    return [{**hit, "role": "hit"} for hit in hits] + neighbors
+
 
 def load_pages(source: Path = RAG_SOURCE) -> list[dict]:
     """資料→章→ページのJSONを、対象資料のページ一覧に変換する。"""
@@ -124,7 +151,7 @@ def open_index(path: Path):
         db.close()
 
 
-def search(query: str) -> list[dict]:
+def search(query: str, with_neighbors: bool | None = None) -> list[dict]:
     """質問を埋め込み、近いページを最大RAG_TOP_K件返す。"""
     if not isinstance(query, str) or not query.strip():
         raise ValueError("検索語が空です。")
@@ -135,11 +162,15 @@ def search(query: str) -> list[dict]:
                    vec_distance_cosine(embedding, ?) AS distance
             FROM chunks ORDER BY distance, page_id LIMIT ?
         """, (sqlite_vec.serialize_float32(vector), RAG_TOP_K))
-        return [dict(row) for row in rows]
+        hits = [dict(row) for row in rows]
+    if RAG_NEIGHBORS if with_neighbors is None else with_neighbors:
+        return add_neighbors(hits)
+    return hits
 
 
 def search_graph(query: str) -> dict:
     """ベクトル検索を入口に、前後ページと共通用語で候補を広げる。"""
+    seeds = [hit for hit in search(query, with_neighbors=False) if hit["page_id"] in pages][:min(GRAPH_START_K, GRAPH_MAX_RESULTS)]
     pages = {page["page_id"]: page for page in load_pages(RAG_SOURCE)}
     graph = json.loads(RAG_GRAPH.read_text(encoding="utf-8"))
     nodes = {node["id"]: node for node in graph["nodes"]
